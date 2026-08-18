@@ -56,8 +56,24 @@ jobs:
       #    "sysfitness-app.xcworkspace") porque o `expo prebuild` deriva
       #    esses nomes do "name"/"slug" do app.json, sanitizados — se o
       #    nome do app mudar, o hardcode quebraria silenciosamente.
-      #    `xcodebuild -list -json` retorna os schemes disponíveis; pegamos
-      #    o primeiro (projetos Expo geram só um scheme por padrão).
+      #
+      #    ATENÇÃO: `xcodebuild -list -json -workspace <ws>` retorna os
+      #    schemes compartilhados de TODOS os projetos agregados no
+      #    workspace — incluindo os do Pods.xcodeproj (dependências via
+      #    CocoaPods). Algumas dependências nativas trazem schemes
+      #    compartilhados próprios (ex: apps de exemplo/teste internos,
+      #    como um scheme chamado "EXApplication") que não têm nada a ver
+      #    com o app em si e não geram um .app ao arquivar. Confiar em
+      #    "primeiro scheme da lista do workspace" pode pegar um desses
+      #    por engano — foi exatamente isso que causou uma run anterior a
+      #    "arquivar com sucesso" um scheme errado, sem produzir
+      #    Products/Applications no .xcarchive.
+      #
+      #    Por isso, pegamos o scheme a partir do .xcodeproj PRINCIPAL do
+      #    app (o único .xcodeproj em ios/ que não é "Pods.xcodeproj",
+      #    gerado pelo próprio `expo prebuild`), não do workspace
+      #    agregado. O build em si continua usando o .xcworkspace (exigido
+      #    pelo CocoaPods), só a descoberta do nome do scheme muda.
       - name: Detectar workspace e scheme do Xcode
         working-directory: ios
         run: |
@@ -67,9 +83,18 @@ jobs:
             echo "Nenhum .xcworkspace encontrado em ios/ apos o prebuild." >&2
             exit 1
           fi
-          SCHEME=$(xcodebuild -workspace "$WORKSPACE" -list -json | \
-            /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["workspace"]["schemes"][0])')
+
+          APP_PROJECT=$(find . -maxdepth 1 -name "*.xcodeproj" ! -name "Pods.xcodeproj" | head -n1 | sed 's|^\./||')
+          if [ -z "$APP_PROJECT" ]; then
+            echo "Nenhum .xcodeproj do app encontrado em ios/ apos o prebuild." >&2
+            exit 1
+          fi
+
+          SCHEME=$(xcodebuild -project "$APP_PROJECT" -list -json | \
+            /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["project"]["schemes"][0])')
+
           echo "Workspace detectado: $WORKSPACE"
+          echo "Projeto do app detectado: $APP_PROJECT"
           echo "Scheme detectado: $SCHEME"
           echo "IOS_WORKSPACE=$WORKSPACE" >> "$GITHUB_ENV"
           echo "IOS_SCHEME=$SCHEME" >> "$GITHUB_ENV"
@@ -163,18 +188,32 @@ jobs:
       #    (app-store, ad-hoc, development, etc.) e, sem conta paga /
       #    certificado, ele falha. Como o build já é não-assinado,
       #    montamos o .ipa manualmente:
-      #      1. Localiza o .app dentro de
+      #      1. Encontra o .xcarchive gerado no passo anterior por busca,
+      #         não por um caminho fixo — o nome do arquivo depende do
+      #         scheme detectado, e só existe um .xcarchive nesse diretório
+      #         (criado do zero neste job), então pegar o primeiro
+      #         resultado é seguro.
+      #      2. Localiza o .app dentro de
       #         <xcarchive>/Products/Applications/.
-      #      2. Copia esse .app para Payload/<nome>.app.
-      #      3. Zipa a pasta Payload/ inteira, gerando o .ipa.
+      #      3. Copia esse .app para Payload/<nome>.app.
+      #      4. Zipa a pasta Payload/ inteira, gerando o .ipa.
       - name: Empacotar .ipa (zip da pasta Payload/.app)
         run: |
           set -euo pipefail
-          ARCHIVE_PATH="$RUNNER_TEMP/build/${IOS_SCHEME}.xcarchive"
-          APP_PATH=$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name "*.app" | head -n1)
+
+          ARCHIVE_PATH=$(find "$RUNNER_TEMP/build" -maxdepth 1 -name "*.xcarchive" | head -n1)
+          if [ -z "$ARCHIVE_PATH" ]; then
+            echo "Nenhum .xcarchive encontrado em $RUNNER_TEMP/build" >&2
+            exit 1
+          fi
+          echo "Archive encontrado: $ARCHIVE_PATH"
+
+          APP_PATH=$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name "*.app" 2>/dev/null | head -n1)
 
           if [ -z "$APP_PATH" ]; then
             echo "Nenhum .app encontrado em $ARCHIVE_PATH/Products/Applications" >&2
+            echo "Conteudo do archive (ate 3 niveis):" >&2
+            find "$ARCHIVE_PATH" -maxdepth 3 >&2 || true
             exit 1
           fi
 
