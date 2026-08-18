@@ -1,0 +1,204 @@
+name: Build unsigned .ipa (iOS)
+
+# Gera um .ipa NÃO ASSINADO do app Expo/React Native usando um runner
+# macOS gratuito do GitHub Actions, sem EAS Build e sem conta Apple
+# Developer paga. O .ipa resultante deve ser assinado depois, localmente,
+# com uma ferramenta de sideload (ex: Sideloadly) usando uma Apple ID
+# gratuita.
+#
+# Disparo manual por padrão (aba Actions > Run workflow) para evitar
+# consumir minutos de runner macOS (que custam ~10x mais que Linux nos
+# planos gratuitos/pagos do GitHub) a cada push. Ajuste o bloco "on" se
+# quiser rodar automaticamente em push/PR.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  build-unsigned-ipa:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      # 1. Checkout do repositório
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      # 2. Instala o Node e as dependências
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependências (npm install)
+        run: npm install
+
+      # 3. Gera a pasta ios/ nativa a partir do projeto managed Expo.
+      #    --non-interactive evita prompts (por isso app.json precisa ter
+      #    ios.bundleIdentifier definido, senão o comando falha em CI).
+      #    --clean remove qualquer pasta ios/ pré-existente antes de gerar,
+      #    garantindo build reprodutível a partir do zero.
+      - name: Rodar expo prebuild (gera projeto nativo iOS)
+        run: npx expo prebuild --platform ios --non-interactive --clean
+
+      # O `expo prebuild` normalmente já roda `pod install` sozinho quando
+      # executado em macOS. Rodamos de novo aqui, explicitamente, como
+      # garantia: se por qualquer motivo (rede instável, cache do CocoaPods,
+      # etc.) o pod install do prebuild falhar silenciosamente ou os Pods
+      # ficarem desatualizados, esse passo cobre a lacuna. É idempotente,
+      # então rodar de novo não tem custo real.
+      - name: Garantir Pods instalados (CocoaPods)
+        working-directory: ios
+        run: pod install --repo-update
+
+      # 4. Descobre dinamicamente o nome do .xcworkspace e o scheme do
+      #    Xcode gerados pelo prebuild. Evitamos hardcodar o nome (ex:
+      #    "sysfitness-app.xcworkspace") porque o `expo prebuild` deriva
+      #    esses nomes do "name"/"slug" do app.json, sanitizados — se o
+      #    nome do app mudar, o hardcode quebraria silenciosamente.
+      #    `xcodebuild -list -json` retorna os schemes disponíveis; pegamos
+      #    o primeiro (projetos Expo geram só um scheme por padrão).
+      - name: Detectar workspace e scheme do Xcode
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          WORKSPACE=$(find . -maxdepth 1 -name "*.xcworkspace" | head -n1 | sed 's|^\./||')
+          if [ -z "$WORKSPACE" ]; then
+            echo "Nenhum .xcworkspace encontrado em ios/ apos o prebuild." >&2
+            exit 1
+          fi
+          SCHEME=$(xcodebuild -workspace "$WORKSPACE" -list -json | \
+            /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["workspace"]["schemes"][0])')
+          echo "Workspace detectado: $WORKSPACE"
+          echo "Scheme detectado: $SCHEME"
+          echo "IOS_WORKSPACE=$WORKSPACE" >> "$GITHUB_ENV"
+          echo "IOS_SCHEME=$SCHEME" >> "$GITHUB_ENV"
+
+      # 5. Arquiva o projeto SEM assinatura de código.
+      #
+      #    O que cada flag faz:
+      #    - archive                      -> gera um .xcarchive (build de
+      #                                       Release completo, otimizado
+      #                                       para distribuição), em vez de
+      #                                       apenas compilar (build).
+      #    - -workspace / -scheme         -> aponta pro .xcworkspace e
+      #                                       scheme detectados no passo
+      #                                       anterior (o CocoaPods exige
+      #                                       usar o .xcworkspace, não o
+      #                                       .xcodeproj, quando há Pods).
+      #    - -configuration Release       -> build de release (sem
+      #                                       otimizações de debug), igual
+      #                                       ao que a App Store receberia.
+      #    - -destination "generic/platform=iOS"
+      #                                    -> compila para iOS "genérico"
+      #                                       (dispositivo real arm64), sem
+      #                                       precisar de um device físico
+      #                                       conectado ao runner nem de um
+      #                                       simulador. Essencial: sem
+      #                                       isso o xcodebuild tentaria
+      #                                       usar um destino de simulador
+      #                                       ou pediria um device.
+      #    - -archivePath                 -> onde salvar o .xcarchive
+      #                                       resultante.
+      #    - CODE_SIGNING_ALLOWED=NO      -> a flag principal: desliga
+      #                                       completamente a assinatura de
+      #                                       código durante o build. Sem
+      #                                       ela, o xcodebuild falha
+      #                                       porque o projeto não tem
+      #                                       Team ID / certificado de
+      #                                       desenvolvedor Apple
+      #                                       configurado (não temos conta
+      #                                       paga).
+      #    - CODE_SIGNING_REQUIRED=NO     -> reforça que a assinatura não é
+      #                                       obrigatória para as fases de
+      #                                       build que normalmente exigem
+      #                                       (ex: embutir frameworks).
+      #    - CODE_SIGN_IDENTITY=""        -> garante que nenhuma identidade
+      #                                       de assinatura seja aplicada
+      #                                       mesmo que o projeto tenha
+      #                                       alguma configurada por
+      #                                       padrão.
+      #    - AD_HOC_CODE_SIGNING_ALLOWED=YES
+      #                                    -> permite que o Xcode aplique
+      #                                       uma assinatura ad-hoc "vazia"
+      #                                       (fake) só o suficiente para
+      #                                       o processo de archive/export
+      #                                       não travar em certas versões
+      #                                       do Xcode, sem exigir um
+      #                                       certificado real.
+      #    - DEVELOPMENT_TEAM=""          -> limpa qualquer Team ID que
+      #                                       tenha vindo do projeto
+      #                                       gerado pelo prebuild.
+      #
+      #    NOTA: dependendo da versão exata do Xcode no runner e de
+      #    plugins/config-plugins usados pelo projeto Expo, pode ser
+      #    necessário ajustar essas flags (ex: algumas versões do Xcode
+      #    são mais rígidas e exigem também
+      #    `ENTITLEMENTS_REQUIRED=NO` ou desabilitar capabilities
+      #    específicas nos targets gerados). Se o archive falhar aqui,
+      #    esse é o primeiro lugar pra investigar.
+      - name: Arquivar projeto sem assinatura (xcodebuild archive)
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -workspace "$IOS_WORKSPACE" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/build/${IOS_SCHEME}.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM=""
+
+      # 6. Empacota o resultado como .ipa.
+      #
+      #    Um .ipa nada mais é que um .zip contendo uma pasta "Payload/"
+      #    na raiz, com o pacote .app dentro dela. Não usamos
+      #    `xcodebuild -exportArchive` (que normalmente gera o .ipa a
+      #    partir do .xcarchive) porque esse comando exige um
+      #    ExportOptions.plist com um método de assinatura válido
+      #    (app-store, ad-hoc, development, etc.) e, sem conta paga /
+      #    certificado, ele falha. Como o build já é não-assinado,
+      #    montamos o .ipa manualmente:
+      #      1. Localiza o .app dentro de
+      #         <xcarchive>/Products/Applications/.
+      #      2. Copia esse .app para Payload/<nome>.app.
+      #      3. Zipa a pasta Payload/ inteira, gerando o .ipa.
+      - name: Empacotar .ipa (zip da pasta Payload/.app)
+        run: |
+          set -euo pipefail
+          ARCHIVE_PATH="$RUNNER_TEMP/build/${IOS_SCHEME}.xcarchive"
+          APP_PATH=$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name "*.app" | head -n1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "Nenhum .app encontrado em $ARCHIVE_PATH/Products/Applications" >&2
+            exit 1
+          fi
+
+          APP_NAME=$(basename "$APP_PATH")
+          echo "App encontrado: $APP_NAME"
+
+          PACKAGE_DIR="$RUNNER_TEMP/ipa-package"
+          mkdir -p "$PACKAGE_DIR/Payload"
+          cp -r "$APP_PATH" "$PACKAGE_DIR/Payload/$APP_NAME"
+
+          IPA_NAME="${IOS_SCHEME}-unsigned.ipa"
+          (cd "$PACKAGE_DIR" && zip -qr "$GITHUB_WORKSPACE/$IPA_NAME" Payload)
+
+          echo "IPA_PATH=$GITHUB_WORKSPACE/$IPA_NAME" >> "$GITHUB_ENV"
+          echo "IPA gerado: $IPA_NAME"
+
+      # 7. Sobe o .ipa como artifact do workflow run, disponível para
+      #    download na aba Actions do GitHub (na página do run concluído,
+      #    seção "Artifacts"). Fica disponível por 90 dias por padrão
+      #    (ajustável via retention-days).
+      - name: Upload do .ipa como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-ipa
+          path: ${{ env.IPA_PATH }}
+          retention-days: 30
+          if-no-files-found: error
