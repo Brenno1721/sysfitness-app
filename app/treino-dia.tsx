@@ -17,6 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Svg, { Circle } from 'react-native-svg';
 import Animated, { useAnimatedProps, useSharedValue, withTiming, Easing } from 'react-native-reanimated';
 import { useWorkoutLog } from '../context/WorkoutLogContext';
+import type { SetLog } from '../context/WorkoutLogContext';
 import { useRoutine } from '../context/RoutineContext';
 import { useWorkoutSession } from '../context/WorkoutSessionContext';
 import { parseSetsCount } from '../data/workoutPlan';
@@ -50,72 +51,80 @@ function formatTime(seconds: number): string {
   return `${m}:${s}`;
 }
 
-function roundToStep(value: number, step: number): number {
-  return Math.round(value / step) * step;
-}
-
 function formatNumber(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(1);
 }
 
-function Stepper({
+function NumberField({
   label,
   value,
-  step,
-  onChange,
+  onChangeText,
+  inputRef,
+  autoFocus,
+  returnKeyType,
+  onSubmitEditing,
 }: {
   label: string;
-  value: number;
-  step: number;
-  onChange: (next: number) => void;
+  value: string;
+  onChangeText: (next: string) => void;
+  inputRef?: React.RefObject<TextInput | null>;
+  autoFocus?: boolean;
+  returnKeyType?: 'next' | 'done';
+  onSubmitEditing?: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [inputValue, setInputValue] = useState('');
   const { COLORS } = useTheme();
   const styles = useMemo(() => makeStyles(COLORS), [COLORS]);
 
-  const decrement = () => onChange(Math.max(0, roundToStep(value - step, step)));
-  const increment = () => onChange(roundToStep(value + step, step));
+  return (
+    <View style={styles.numberFieldBlock}>
+      <Text style={styles.numberFieldLabel}>{label}</Text>
+      <TextInput
+        ref={inputRef}
+        style={styles.numberFieldInput}
+        value={value}
+        onChangeText={onChangeText}
+        keyboardType="numeric"
+        autoFocus={autoFocus}
+        returnKeyType={returnKeyType}
+        onSubmitEditing={onSubmitEditing}
+        selectTextOnFocus
+        placeholder="0"
+        placeholderTextColor={COLORS.muted}
+      />
+    </View>
+  );
+}
 
-  const startEditing = () => {
-    setInputValue(formatNumber(value));
-    setEditing(true);
-  };
-
-  const commitEdit = () => {
-    const parsed = parseFloat(inputValue.replace(',', '.'));
-    if (!isNaN(parsed) && parsed >= 0) {
-      onChange(parsed);
-    }
-    setEditing(false);
-  };
+function RpeSelector({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (next: number | null) => void;
+}) {
+  const { COLORS } = useTheme();
+  const styles = useMemo(() => makeStyles(COLORS), [COLORS]);
+  const options = useMemo(() => Array.from({ length: 10 }, (_, i) => i + 1), []);
 
   return (
-    <View style={styles.stepperBlock}>
-      <Text style={styles.stepperLabel}>{label}</Text>
-      <View style={styles.stepperRow}>
-        <TouchableOpacity onPress={decrement} hitSlop={8}>
-          <Ionicons name="remove-circle-outline" size={32} color={COLORS.text} />
-        </TouchableOpacity>
-        {editing ? (
-          <TextInput
-            style={styles.stepperInput}
-            value={inputValue}
-            onChangeText={setInputValue}
-            onBlur={commitEdit}
-            onSubmitEditing={commitEdit}
-            keyboardType="decimal-pad"
-            autoFocus
-            selectTextOnFocus
-          />
-        ) : (
-          <TouchableOpacity onPress={startEditing} hitSlop={8}>
-            <Text style={styles.stepperValue}>{formatNumber(value)}</Text>
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity onPress={increment} hitSlop={8}>
-          <Ionicons name="add-circle-outline" size={32} color={COLORS.accent} />
-        </TouchableOpacity>
+    <View style={styles.numberFieldBlock}>
+      <Text style={styles.numberFieldLabel}>RPE (opcional)</Text>
+      <View style={styles.rpeRow}>
+        {options.map((n) => {
+          const selected = value === n;
+          return (
+            <TouchableOpacity
+              key={n}
+              style={[styles.rpeButton, selected && styles.rpeButtonSelected]}
+              onPress={() => onChange(selected ? null : n)}
+              hitSlop={4}
+            >
+              <Text style={[styles.rpeButtonText, selected && styles.rpeButtonTextSelected]}>
+                {n}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     </View>
   );
@@ -241,14 +250,19 @@ export default function TreinoDiaScreen() {
 
   const { elapsedSeconds, isActive, startSession, endSession } = useWorkoutSession();
   const [modalVisible, setModalVisible] = useState(false);
-  const [modalReps, setModalReps] = useState(0);
-  const [modalWeight, setModalWeight] = useState(0);
+  const [modalReps, setModalReps] = useState('');
+  const [modalWeight, setModalWeight] = useState('');
+  const [modalRpe, setModalRpe] = useState<number | null>(null);
   // Refs ensure handleSubmitSet always reads the latest value even if onBlur
   // and onPress race (T3 fix: manual TextInput edit commits before save).
-  const modalRepsRef = useRef(0);
-  const modalWeightRef = useRef(0);
-  const updateModalReps = (v: number) => { modalRepsRef.current = v; setModalReps(v); };
-  const updateModalWeight = (v: number) => { modalWeightRef.current = v; setModalWeight(v); };
+  const modalRepsRef = useRef('');
+  const modalWeightRef = useRef('');
+  const modalRpeRef = useRef<number | null>(null);
+  const updateModalReps = (v: string) => { modalRepsRef.current = v; setModalReps(v); };
+  const updateModalWeight = (v: string) => { modalWeightRef.current = v; setModalWeight(v); };
+  const updateModalRpe = (v: number | null) => { modalRpeRef.current = v; setModalRpe(v); };
+  const repsInputRef = useRef<TextInput>(null);
+  const weightInputRef = useRef<TextInput>(null);
   const [modalExercise, setModalExercise] = useState<FlatExercise | null>(null);
   const [modalEditIndex, setModalEditIndex] = useState<number | null>(null);
   const [lastRecords, setLastRecords] = useState<Record<string, ExerciseRecord>>({});
@@ -400,10 +414,9 @@ export default function TreinoDiaScreen() {
     setModalExercise(ex);
     setModalEditIndex(null);
     const prevRecord = lastRecords[ex.name];
-    const reps = prevRecord ? prevRecord.reps : 0;
-    const weight = prevRecord ? prevRecord.weight : 0;
-    updateModalReps(reps);
-    updateModalWeight(weight);
+    updateModalReps(prevRecord ? formatNumber(prevRecord.reps) : '');
+    updateModalWeight(prevRecord ? formatNumber(prevRecord.weight) : '');
+    updateModalRpe(null);
     setModalVisible(true);
   };
 
@@ -411,10 +424,9 @@ export default function TreinoDiaScreen() {
     const set = dayState[ex.key]?.setsLog[index];
     setModalExercise(ex);
     setModalEditIndex(index);
-    const reps = set ? Number(set.reps) || 0 : 0;
-    const weight = set ? Number(set.weight) || 0 : 0;
-    updateModalReps(reps);
-    updateModalWeight(weight);
+    updateModalReps(set?.reps ?? '');
+    updateModalWeight(set?.weight ?? '');
+    updateModalRpe(set?.rpe ?? null);
     setModalVisible(true);
   };
 
@@ -434,8 +446,12 @@ export default function TreinoDiaScreen() {
 
   const handleSubmitSet = async () => {
     if (!modalExercise) return;
-    // T3: read from refs so manual TextInput edits are always captured.
-    const setValue = { reps: String(modalRepsRef.current), weight: String(modalWeightRef.current) };
+    // T3: read from refs so a TextInput edit still in flight is always captured.
+    const setValue: SetLog = {
+      reps: modalRepsRef.current,
+      weight: modalWeightRef.current,
+      ...(modalRpeRef.current != null ? { rpe: modalRpeRef.current } : {}),
+    };
 
     if (modalEditIndex !== null) {
       updateSetLog(modalExercise.key, modalEditIndex, setValue);
@@ -444,7 +460,10 @@ export default function TreinoDiaScreen() {
       return;
     }
 
-    const record: ExerciseRecord = { reps: modalRepsRef.current, weight: modalWeightRef.current };
+    const record: ExerciseRecord = {
+      reps: parseFloat(modalRepsRef.current) || 0,
+      weight: parseFloat(modalWeightRef.current) || 0,
+    };
     setLastRecords((prev) => ({ ...prev, [modalExercise.name]: record }));
 
     // T1: totalSets=1 marks done after the first (and only) recorded set.
@@ -602,8 +621,8 @@ export default function TreinoDiaScreen() {
                       {isDone && (dayEntry?.finishedEarly || lastSet) && (
                         <Text style={styles.cardClosedSummary}>
                           {dayEntry?.finishedEarly
-                            ? `${setsLog.length} de ${ex.totalSets} séries${lastSet ? ` · última: ${lastSet.reps} reps · ${lastSet.weight}kg` : ''}`
-                            : `${setsLog.length} séries · última: ${lastSet!.reps} reps · ${lastSet!.weight}kg`}
+                            ? `${setsLog.length} de ${ex.totalSets} séries${lastSet ? ` · última: ${lastSet.reps} reps · ${lastSet.weight}kg${lastSet.rpe != null ? ` · RPE ${lastSet.rpe}` : ''}` : ''}`
+                            : `${setsLog.length} séries · última: ${lastSet!.reps} reps · ${lastSet!.weight}kg${lastSet!.rpe != null ? ` · RPE ${lastSet!.rpe}` : ''}`}
                         </Text>
                       )}
                     </View>
@@ -780,8 +799,13 @@ export default function TreinoDiaScreen() {
         )}
       </View>
 
-      {/* Reps + weight stepper modal */}
-      <Modal visible={modalVisible} transparent animationType="fade">
+      {/* Reps + weight + RPE modal */}
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="fade"
+        onShow={() => repsInputRef.current?.focus()}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalExerciseName}>{modalExercise?.name}</Text>
@@ -791,9 +815,25 @@ export default function TreinoDiaScreen() {
                 : 'Qual foi sua melhor série?'}
             </Text>
 
-            <Stepper label="REPETIÇÕES" value={modalReps} step={1} onChange={updateModalReps} />
+            <NumberField
+              label="REPETIÇÕES"
+              value={modalReps}
+              onChangeText={updateModalReps}
+              inputRef={repsInputRef}
+              autoFocus
+              returnKeyType="next"
+              onSubmitEditing={() => weightInputRef.current?.focus()}
+            />
             <View style={{ height: SPACING.md }} />
-            <Stepper label="PESO USADO (KG)" value={modalWeight} step={2.5} onChange={updateModalWeight} />
+            <NumberField
+              label="PESO USADO (KG)"
+              value={modalWeight}
+              onChangeText={updateModalWeight}
+              inputRef={weightInputRef}
+              returnKeyType="done"
+            />
+            <View style={{ height: SPACING.md }} />
+            <RpeSelector value={modalRpe} onChange={updateModalRpe} />
 
             <View style={styles.modalButtons}>
               <TouchableOpacity style={styles.modalSkip} onPress={handleCancelModal}>
@@ -1127,32 +1167,47 @@ function makeStyles(COLORS: ThemeColors) {
     marginBottom: SPACING.lg,
     textAlign: 'center',
   },
-  stepperBlock: { alignItems: 'center' },
-  stepperLabel: {
+  numberFieldBlock: { alignItems: 'center' },
+  numberFieldLabel: {
     ...FONT.sectionLabel,
     color: COLORS.muted,
     fontSize: 11,
     marginBottom: SPACING.sm,
   },
-  stepperRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.lg },
-  stepperValue: {
+  numberFieldInput: {
     color: COLORS.text,
-    fontWeight: '900',
+    fontWeight: '800',
     fontSize: 28,
-    minWidth: 64,
+    width: '100%',
     textAlign: 'center',
-    fontVariant: ['tabular-nums'],
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
+    borderRadius: RADIUS.sm,
+    paddingVertical: SPACING.sm,
   },
-  stepperInput: {
-    color: COLORS.text,
-    fontWeight: '900',
-    fontSize: 28,
-    minWidth: 64,
-    textAlign: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: COLORS.accent,
-    paddingBottom: 2,
+  rpeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 6,
   },
+  rpeButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: COLORS.cardBorder,
+    backgroundColor: COLORS.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rpeButtonSelected: {
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
+  },
+  rpeButtonText: { color: COLORS.text, fontWeight: '700', fontSize: 13 },
+  rpeButtonTextSelected: { color: '#FFFFFF' },
   modalButtons: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.xl },
   modalSkip: {
     flex: 1,

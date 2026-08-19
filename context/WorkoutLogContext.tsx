@@ -12,7 +12,7 @@ import { apiGet, apiPost } from '../lib/api';
 import { DayPlan, todayKey } from '../data/workoutPlan';
 import type { WeightRecord } from '../lib/exerciseWeights';
 
-export type SetLog = { reps: string; weight: string };
+export type SetLog = { reps: string; weight: string; rpe?: number };
 export type ExEntry = { done: boolean; setsLog: SetLog[]; finishedEarly?: boolean };
 export type DayState = Record<string, ExEntry>; // key: "groupIndex-exIndex"
 
@@ -34,7 +34,7 @@ const DAY_LABELS_PT: Record<string, string> = {
 };
 
 // Internal shape for the sessions API response
-type ApiSetLog = { exerciseName: string; setNumber: number; reps: number; weight: number };
+type ApiSetLog = { exerciseName: string; setNumber: number; reps: number; weight: number; rpe?: number };
 type ApiSession = {
   id: string;
   routineId?: string | null;
@@ -173,6 +173,7 @@ export function WorkoutLogProvider({ children }: { children: React.ReactNode }) 
             setNumber: si + 1,
             reps: parseFloat(s.reps) || 0,
             weight: parseFloat(s.weight) || 0,
+            ...(s.rpe != null ? { rpe: s.rpe } : {}),
           });
         });
       })
