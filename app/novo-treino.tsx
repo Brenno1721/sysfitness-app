@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef, useMemo } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -160,7 +160,29 @@ export default function NovoTreinoScreen() {
     }));
   };
 
-  const handleFinish = () => {
+  // Bloqueia o envio se algum exercício ficou sem "séries" preenchido — o
+  // backend rejeita setsLabel vazio (MinLength(1)) e, sem essa checagem, o
+  // PATCH/POST falhava silenciosamente (unhandled rejection) deixando o
+  // usuário sem feedback nenhum.
+  const findExerciseWithEmptySets = (): { dayKey: string; name: string } | null => {
+    for (const d of trainingDays) {
+      const entries = dayExercises[d] || [];
+      const empty = entries.find((e) => !e.sets.trim());
+      if (empty) return { dayKey: d, name: empty.name };
+    }
+    return null;
+  };
+
+  const handleFinish = async () => {
+    const missing = findExerciseWithEmptySets();
+    if (missing) {
+      Alert.alert(
+        'Séries obrigatórias',
+        `Preencha as séries de "${missing.name}" (${DAY_LABELS[missing.dayKey]}) antes de continuar.`
+      );
+      return;
+    }
+
     const days: Record<string, DayPlan> = {};
 
     DAY_ORDER.forEach((d) => {
@@ -197,12 +219,19 @@ export default function NovoTreinoScreen() {
       days,
     };
 
-    if (editId) {
-      updateRoutine(editId, routine);
-    } else {
-      addRoutine(routine);
+    try {
+      if (editId) {
+        await updateRoutine(editId, routine);
+      } else {
+        await addRoutine(routine);
+      }
+      router.replace('/(tabs)/treino');
+    } catch (e) {
+      Alert.alert(
+        'Não foi possível salvar',
+        e instanceof Error ? e.message : 'Tente novamente.'
+      );
     }
-    router.replace('/(tabs)/treino');
   };
 
   return (
