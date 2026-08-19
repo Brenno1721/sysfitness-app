@@ -10,6 +10,7 @@ import { useGamification } from '../../context/GamificationContext';
 import { ACHIEVEMENTS } from '../../lib/gamification';
 import { usePlan } from '../../context/PlanContext';
 import { SPACING, RADIUS, FONT } from '../../constants/theme';
+import { goalLabels } from '../../constants/onboardingOptions';
 
 type MenuItem = {
   icon: keyof typeof Ionicons.glyphMap;
@@ -103,6 +104,22 @@ export default function PerfilScreen() {
     statValue: { color: COLORS.text, fontWeight: '900', fontSize: 20 },
     statLabel: { color: COLORS.mutedDim, fontSize: 9.5, fontWeight: '700', marginTop: 4 },
     streakValueRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    profileInfoCard: {
+      backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.cardBorder,
+      borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.lg,
+    },
+    profileInfoHeader: {
+      flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+      marginBottom: SPACING.sm,
+    },
+    profileInfoTitle: { ...FONT.sectionLabel, color: COLORS.muted, fontSize: 11 },
+    profileInfoEditLink: { color: COLORS.accent, fontSize: 12.5, fontWeight: '700' },
+    profileInfoRow: {
+      flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+      paddingVertical: 6,
+    },
+    profileInfoLabel: { color: COLORS.muted, fontSize: 12.5, fontWeight: '600' },
+    profileInfoValue: { color: COLORS.text, fontSize: 12.5, fontWeight: '700', flex: 1, textAlign: 'right', marginLeft: SPACING.md },
     menu: {
       backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.cardBorder,
       borderRadius: RADIUS.md, marginBottom: SPACING.lg, overflow: 'hidden',
@@ -143,6 +160,39 @@ export default function PerfilScreen() {
         </View>
         <View style={styles.levelBarTrack}>
           <View style={[styles.levelBarFill, { width: `${levelInfo.progress * 100}%` }]} />
+        </View>
+      </View>
+
+      <View style={styles.profileInfoCard}>
+        <View style={styles.profileInfoHeader}>
+          <Text style={styles.profileInfoTitle}>PERFIL FÍSICO</Text>
+          <TouchableOpacity onPress={() => router.push('/onboarding?mode=edit')}>
+            <Text style={styles.profileInfoEditLink}>Editar</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={styles.profileInfoRow}>
+          <Text style={styles.profileInfoLabel}>Idade</Text>
+          <Text style={styles.profileInfoValue}>
+            {user?.age != null ? `${user.age} anos` : '—'}
+          </Text>
+        </View>
+        <View style={styles.profileInfoRow}>
+          <Text style={styles.profileInfoLabel}>Peso</Text>
+          <Text style={styles.profileInfoValue}>
+            {user?.weightKg != null ? `${user.weightKg} kg` : '—'}
+          </Text>
+        </View>
+        <View style={styles.profileInfoRow}>
+          <Text style={styles.profileInfoLabel}>Altura</Text>
+          <Text style={styles.profileInfoValue}>
+            {user?.heightCm != null ? `${user.heightCm} cm` : '—'}
+          </Text>
+        </View>
+        <View style={styles.profileInfoRow}>
+          <Text style={styles.profileInfoLabel}>Objetivo</Text>
+          <Text style={styles.profileInfoValue}>
+            {goalLabels(user?.goals).join(', ') || '—'}
+          </Text>
         </View>
       </View>
 

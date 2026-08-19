@@ -26,10 +26,16 @@ function RootNavigation() {
     const segment = segments[0];
     const isPublicRoute =
       segment === '(auth)' || segment === 'welcome' || segment === 'personal-em-construcao';
+    const isOnboardingRoute = segment === 'onboarding';
 
     if (!user && !isPublicRoute) {
       router.replace('/welcome');
-    } else if (user && isPublicRoute) {
+    } else if (user && !user.onboardingCompleted && !isOnboardingRoute) {
+      // Vale tanto pra quem acabou de criar conta quanto pra contas antigas
+      // (onboardingCompleted vem false por padrão da migration) — em
+      // qualquer rota, com o onboarding pendente, cai aqui antes de tudo.
+      router.replace('/onboarding');
+    } else if (user && user.onboardingCompleted && isPublicRoute) {
       router.replace('/(tabs)');
     }
   }, [user, isLoading, segments, router]);
@@ -54,6 +60,7 @@ function RootNavigation() {
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="welcome" />
+      <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
       <Stack.Screen name="personal-em-construcao" />
       <Stack.Screen name="historico" options={{ presentation: 'card' }} />
       <Stack.Screen name="timer-fullscreen" options={{ presentation: 'card' }} />

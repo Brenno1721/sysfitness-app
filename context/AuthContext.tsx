@@ -15,11 +15,27 @@ import {
   SessionExpiredError,
 } from '../lib/api';
 
+export type OnboardingData = {
+  gender?: string;
+  age?: number;
+  weightKg?: number;
+  heightCm?: number;
+  goals?: string[];
+  activityLevel?: string;
+};
+
 type User = {
   id: string;
   name: string;
   email: string;
   role?: string;
+  gender: string | null;
+  age: number | null;
+  weightKg: number | null;
+  heightCm: number | null;
+  goals: string[];
+  activityLevel: string | null;
+  onboardingCompleted: boolean;
 };
 
 type AuthContextValue = {
@@ -33,6 +49,7 @@ type AuthContextValue = {
   ) => Promise<{ error?: string }>;
   logout: () => Promise<void>;
   updateProfile: (name: string, email: string) => Promise<void>;
+  completeOnboarding: (data: OnboardingData) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -102,8 +119,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(updated);
   }, []);
 
+  const completeOnboarding = useCallback(async (data: OnboardingData) => {
+    const updated = await apiPatch<User>('/auth/onboarding', data);
+    await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(updated));
+    setUser(updated);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, signUp, logout, updateProfile }}>
+    <AuthContext.Provider
+      value={{ user, isLoading, login, signUp, logout, updateProfile, completeOnboarding }}
+    >
       {children}
     </AuthContext.Provider>
   );
