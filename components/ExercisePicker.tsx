@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { EXERCISE_DATABASE, ExerciseCategory, ExerciseDBEntry } from '../data/exerciseDatabase';
+import MuscleBodySelector from './MuscleBodySelector';
 import { SPACING, RADIUS } from '../constants/theme';
 import { useTheme } from '../context/ThemeContext';
 
@@ -11,6 +12,7 @@ const CATEGORIES: ExerciseCategory[] = [
 ];
 
 type CategoryFilter = 'Todos' | ExerciseCategory;
+type PickerMode = 'lista' | 'corpo';
 
 function normalize(text: string): string {
   return text
@@ -27,6 +29,8 @@ export default function ExercisePicker({ onAdd }: Props) {
   const { COLORS } = useTheme();
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState<CategoryFilter>('Todos');
+  const [mode, setMode] = useState<PickerMode>('lista');
+  const bodyActiveCategory = category === 'Todos' ? null : category;
 
   const filtered = useMemo(() => {
     const query = normalize(search);
@@ -53,6 +57,23 @@ export default function ExercisePicker({ onAdd }: Props) {
           paddingVertical: 10,
         },
         searchInput: { flex: 1, color: COLORS.text, fontSize: 14 },
+        modeToggleRow: { flexDirection: 'row', gap: SPACING.xs, marginTop: SPACING.sm },
+        modeButton: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          borderWidth: 1,
+          borderColor: COLORS.cardBorder,
+          borderRadius: RADIUS.pill,
+          paddingHorizontal: 12,
+          paddingVertical: 6,
+          backgroundColor: COLORS.card,
+        },
+        modeButtonActive: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+        modeButtonText: { color: COLORS.muted, fontSize: 11.5, fontWeight: '700' },
+        modeButtonTextActive: { color: '#FFFFFF' },
+        bodyWrap: { paddingVertical: SPACING.sm },
+        cardioButtonWrap: { alignSelf: 'flex-start', marginTop: SPACING.sm },
         categoryRow: { gap: SPACING.xs, paddingVertical: SPACING.sm },
         categoryChip: {
           borderWidth: 1,
@@ -108,23 +129,62 @@ export default function ExercisePicker({ onAdd }: Props) {
         />
       </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.categoryRow}
-      >
-        {(['Todos', ...CATEGORIES] as CategoryFilter[]).map((cat) => (
+      <View style={styles.modeToggleRow}>
+        <TouchableOpacity
+          style={[styles.modeButton, mode === 'lista' && styles.modeButtonActive]}
+          onPress={() => setMode('lista')}
+        >
+          <Ionicons name="list-outline" size={15} color={mode === 'lista' ? '#FFFFFF' : COLORS.muted} />
+          <Text style={[styles.modeButtonText, mode === 'lista' && styles.modeButtonTextActive]}>
+            Lista
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.modeButton, mode === 'corpo' && styles.modeButtonActive]}
+          onPress={() => setMode('corpo')}
+        >
+          <Ionicons name="body-outline" size={15} color={mode === 'corpo' ? '#FFFFFF' : COLORS.muted} />
+          <Text style={[styles.modeButtonText, mode === 'corpo' && styles.modeButtonTextActive]}>
+            Corpo
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {mode === 'lista' ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.categoryRow}
+        >
+          {(['Todos', ...CATEGORIES] as CategoryFilter[]).map((cat) => (
+            <TouchableOpacity
+              key={cat}
+              style={[styles.categoryChip, category === cat && styles.categoryChipActive]}
+              onPress={() => setCategory(cat)}
+            >
+              <Text style={[styles.categoryText, category === cat && styles.categoryTextActive]}>
+                {cat}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      ) : (
+        <View style={styles.bodyWrap}>
+          <MuscleBodySelector activeCategory={bodyActiveCategory} onSelectCategory={setCategory} />
           <TouchableOpacity
-            key={cat}
-            style={[styles.categoryChip, category === cat && styles.categoryChipActive]}
-            onPress={() => setCategory(cat)}
+            style={[
+              styles.categoryChip,
+              styles.cardioButtonWrap,
+              category === 'Cardio' && styles.categoryChipActive,
+            ]}
+            onPress={() => setCategory('Cardio')}
           >
-            <Text style={[styles.categoryText, category === cat && styles.categoryTextActive]}>
-              {cat}
+            <Text style={[styles.categoryText, category === 'Cardio' && styles.categoryTextActive]}>
+              Cardio
             </Text>
           </TouchableOpacity>
-        ))}
-      </ScrollView>
+        </View>
+      )}
 
       <View style={styles.list}>
         {filtered.length === 0 ? (
